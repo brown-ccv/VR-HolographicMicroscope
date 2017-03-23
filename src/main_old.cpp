@@ -107,79 +107,6 @@ std::vector<string> ReadSubDirectories(const std::string &refcstrRootDirectory)
 	return subdirectories;
 }
 
-
-void addQuad(float x, float y, float z, float width, float height, std::string filename, DataSet &set, double offset)
-{
-	float scale = 300;
-	float z_scale = 10;
-	quad q;
-	q.vertices[0][0] = (x - width / 2) / scale;
-	q.vertices[0][1] = -(y + height / 2) / scale - offset;
-	q.vertices[0][2] = (z) / scale / z_scale;
-
-	q.vertices[1][0] = (x + width / 2) / scale;
-	q.vertices[1][1] = -(y + height / 2) / scale - offset;
-	q.vertices[1][2] = (z) / scale / z_scale;
-
-	q.vertices[2][0] = (x + width / 2) / scale;
-	q.vertices[2][1] = -(y - height / 2) / scale - offset;
-	q.vertices[2][2] = (z) / scale / z_scale;
-
-	q.vertices[3][0] = (x - width / 2) / scale;
-	q.vertices[3][1] = -(y - height / 2) / scale - offset;
-	q.vertices[3][2] = (z) / scale / z_scale;
-
-	set.quads.push_back(q);
-
-	cv::Mat image_orig = cv::imread(filename, cv::IMREAD_COLOR);
-	cv::Mat image_transparent = cv::Mat(image_orig.rows, image_orig.cols, CV_8UC4);
-
-	for (int i = 0; i < image_orig.rows; i++)
-	{
-		for (int j = 0; j < image_orig.cols; j++)
-		{
-			uchar val = image_orig.at<cv::Vec3b>(i, j)[0];
-			image_transparent.at<cv::Vec4b>(i, j)[0] = val;
-			image_transparent.at<cv::Vec4b>(i, j)[1] = val;
-			image_transparent.at<cv::Vec4b>(i, j)[2] = val;
-			if (image_orig.at<cv::Vec3b>(i, j)[2] != image_orig.at<cv::Vec3b>(i, j)[0])
-			{
-				image_transparent.at<cv::Vec4b>(i, j)[3] = 0;
-			}
-			else
-			{
-				image_transparent.at<cv::Vec4b>(i, j)[3] = 255;
-			}
-		}
-	}
-	set.opencvImages.push_back(image_transparent);
-}
-
-void loadDataSet(std::string folder, double offset)
-{
-	DataSet set;
-	std::string reportName = folder + slash + "reportRaw.xml";
-	tinyxml2::XMLDocument doc;
-	//std::cerr << "Load File " << reportName << std::endl;
-	if (doc.LoadFile(reportName.c_str()) == tinyxml2::XML_SUCCESS){
-		tinyxml2::XMLElement* titleElement;
-		titleElement = doc.FirstChildElement("doc")->FirstChildElement("DATA");
-		for (tinyxml2::XMLElement* child = titleElement->FirstChildElement("ROI"); child != NULL; child = child->NextSiblingElement())
-		{
-			//std::cerr << child->FirstChildElement("IMAGE")->GetText() << std::endl;
-			// do something with each child element
-			addQuad(std::atof(child->FirstChildElement("X")->GetText()),
-				std::atof(child->FirstChildElement("Y")->GetText()),
-				std::atof(child->FirstChildElement("DEPTH")->GetText()),
-				std::atof(child->FirstChildElement("WIDTH")->GetText()),
-				std::atof(child->FirstChildElement("HEIGHT")->GetText()),
-				folder + slash + child->FirstChildElement("IMAGE")->GetText(), set, data.size() * offset);
-		}
-
-	}
-	data.push_back(set);
-}
-
 /** MyVRApp is a subclass of VRApp and overrides two key methods: 1. onVREvent(..)
     and 2. onVRRenderGraphics(..).  This is all that is needed to create a
     simple graphics-based VR application and run it on any display configured
@@ -187,18 +114,10 @@ void loadDataSet(std::string folder, double offset)
  */
 class MyVRApp : public VRApp {
 public:
-	MyVRApp(int argc, char** argv, const std::string& configFile) : currentSet(0), VRApp(argc, argv, configFile), texturesloaded(false),movement_y(0.0), movement_x(0.0),offset(0){
-		if(argc >= 4) offset = std::atof(argv[3]);
-
-		std::vector<std::string> subdirs = ReadSubDirectories(argv[2]);
-		for (int i = 0; i < subdirs.size(); i++){
-			std::cerr << "Load " << subdirs[i] << std::endl;
-			loadDataSet(subdirs[i], offset);
-		}
-		
+	MyVRApp(int argc, char** argv, const std::string& configFile) : VRApp(argc, argv, configFile), texturesloaded(false),movement_y(0.0), movement_x(0.0){
 		computeCenter(data[0]);
-		currentSet = data.size();
-    	}
+		
+    }
 
     virtual ~MyVRApp() {}
 
@@ -219,10 +138,7 @@ public:
 		if (startsWith(event.getName(), "Wand0_Move")){
 			controllerpose = event.getDataAsFloatArray("Transform");
 		}
-		if(event.getName() == "Wand_Left_Btn_Down") {
-			currentSet ++;
-			if(currentSet > data.size())currentSet = 0;
-		}
+	
 		if(event.getName() == "Wand_Joystick_Y_Change") {
 			movement_y = event.getDataAsFloat("AnalogValue");
 		}
@@ -247,7 +163,6 @@ public:
 				roompose = trans * roompose;
 
 				VRMatrix4 rot = VRMatrix4::rotationY(x / 10 / CV_PI);
-
 				roompose = rot * roompose;		
 			}
 		}
@@ -260,7 +175,6 @@ public:
 	}
 
 	// Callback for rendering, inherited from VRRenderHandler
-
 	virtual void onVRRenderGraphicsContext(const VRGraphicsState& state) {
 		if (!texturesloaded)
 		{
@@ -297,12 +211,8 @@ public:
 
     		glPushMatrix();
 			glMultMatrixf(roompose.getArray());
-			//if(currentSet >= data.size() || currentSet < 0){
-				for (int i = 0; i < data.size();i++)
-					drawQuads(data[i]);
-			//}else{
-			//	drawQuads(data[currentSet]);
-			//}
+			for (int i = 0; i < data.size();i++)
+				drawQuads(data[i]);
 		glPopMatrix();
 
 		glPushMatrix();
@@ -367,18 +277,7 @@ public:
 		x = x / set.quads.size() / 4;
 		y = y / set.quads.size() / 4;
 		z = z / set.quads.size() / 4;
-		//double y_min = 10000000;
-		//double y_max = -10000000;
-		//for (int i = 0; i < set.quads.size(); i++)
-		//{
-		//	for (int j = 0; j <4; j++)
-		//	{
-		//		if(y_min > set.quads[i].vertices[j][1])y_min = set.quads[i].vertices[j][1];
-		//		if(y_max < set.quads[i].vertices[j][1])y_max = set.quads[i].vertices[j][1];
-				
-		//	}
-		//}
-		//std::cerr << "Min " << y_min << " Max " << y_max << std::endl;
+
 		roompose = VRMatrix4::translation(VRVector3(-x, -y, -z));
 	}
 
@@ -429,13 +328,86 @@ protected:
 
 	VRMatrix4 controllerpose;
 	VRMatrix4 roompose;
-	unsigned int currentSet;
+
 	float movement_y, movement_x;
-	double offset;
 };
 
+void addQuad(float x, float y, float z, float width, float height, std::string filename, DataSet &set)
+{
+	float scale = 300;
+	float z_scale = 10;
+	quad q;
+	q.vertices[0][0] = (x - width / 2) / scale;
+	q.vertices[0][1] = (y + height / 2) / scale;
+	q.vertices[0][2] = (z) / scale / z_scale;
+
+	q.vertices[1][0] = (x + width / 2) / scale;
+	q.vertices[1][1] = (y + height / 2) / scale;
+	q.vertices[1][2] = (z) / scale / z_scale;
+
+	q.vertices[2][0] = (x + width / 2) / scale;
+	q.vertices[2][1] = (y - height / 2) / scale;
+	q.vertices[2][2] = (z) / scale / z_scale;
+
+	q.vertices[3][0] = (x - width / 2) / scale;
+	q.vertices[3][1] = (y - height / 2) / scale;
+	q.vertices[3][2] = (z) / scale / z_scale;
+
+	set.quads.push_back(q);
+
+	cv::Mat image_orig = cv::imread(filename, cv::IMREAD_COLOR);
+	cv::Mat image_transparent = cv::Mat(image_orig.rows, image_orig.cols, CV_8UC4);
+
+	for (int i = 0; i < image_orig.rows; i++)
+	{
+		for (int j = 0; j < image_orig.cols; j++)
+		{
+			uchar val = image_orig.at<cv::Vec3b>(i, j)[0];
+			image_transparent.at<cv::Vec4b>(i, j)[0] = val;
+			image_transparent.at<cv::Vec4b>(i, j)[1] = val;
+			image_transparent.at<cv::Vec4b>(i, j)[2] = val;
+			if (image_orig.at<cv::Vec3b>(i, j)[2] != image_orig.at<cv::Vec3b>(i, j)[0])
+			{
+				image_transparent.at<cv::Vec4b>(i, j)[3] = 0;
+			}
+			else
+			{
+				image_transparent.at<cv::Vec4b>(i, j)[3] = 255;
+			}
+		}
+	}
+	set.opencvImages.push_back(image_transparent);
+}
+
+void loadDataSet(std::string folder)
+{
+	DataSet set;
+	std::string reportName = folder + slash + "reportRaw.xml";
+	tinyxml2::XMLDocument doc;
+	std::cerr << "Load File " << reportName << std::endl;
+	if (doc.LoadFile(reportName.c_str()) == tinyxml2::XML_SUCCESS){
+		tinyxml2::XMLElement* titleElement;
+		titleElement = doc.FirstChildElement("doc")->FirstChildElement("DATA");
+		for (tinyxml2::XMLElement* child = titleElement->FirstChildElement("ROI"); child != NULL; child = child->NextSiblingElement())
+		{
+			std::cerr << child->FirstChildElement("IMAGE")->GetText() << std::endl;
+			// do something with each child element
+			addQuad(std::atof(child->FirstChildElement("X")->GetText()),
+				std::atof(child->FirstChildElement("Y")->GetText()),
+				std::atof(child->FirstChildElement("DEPTH")->GetText()),
+				std::atof(child->FirstChildElement("WIDTH")->GetText()),
+				std::atof(child->FirstChildElement("HEIGHT")->GetText()),
+				folder + slash + child->FirstChildElement("IMAGE")->GetText(), set);
+		}
+
+	}
+	data.push_back(set);
+}
 
 int main(int argc, char **argv) {
+	std::vector<std::string> subdirs = ReadSubDirectories(argv[2]);
+	for (int i = 0; i < subdirs.size(); i++)
+		loadDataSet(subdirs[i]);
 	
 	std::cerr << "Start" << std::endl; 
 
