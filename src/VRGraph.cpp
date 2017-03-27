@@ -3,7 +3,7 @@
 #include <windows.h>
 #endif
 #include <GL/gl.h>
-
+#include <limits>
 #include "VRGraph.h"
 
 VRGraph::VRGraph(std::string name, std::vector<double> data) : VRMenuElement(name, ""), m_data(data), m_current(-1), m_selection(-1), m_mouseDown(false)

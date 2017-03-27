@@ -659,8 +659,8 @@ public:
 
 			std::vector<std::string> text;
 			text.push_back("Type:  " + hoverHologram->type);
-			text.push_back("ESD:  " + std::to_string(hoverHologram->esd));
-			text.push_back("ESV:  " + std::to_string(hoverHologram->esv));
+			text.push_back("ESD:  " + std::to_string((long double)hoverHologram->esd));
+			text.push_back("ESV:  " + std::to_string((long double)hoverHologram->esv));
 			VRFontHandler::getInstance()->renderMultiLineTextBox(text, 
 				hoverHologram->vertices[1][0], hoverHologram->vertices[1][1]-0.3, hoverHologram->vertices[0][2] + hoverHologram->setID * hologramSize[2],
 				0.6, 0.3, VRFontHandler::LEFT, true);
@@ -683,7 +683,7 @@ public:
 				std::pow((startMeasure.z - endMeasure.z) * SCALE * Z_SCALE, 2)
 				);
 
-			VRFontHandler::getInstance()->renderTextBox(std::to_string(dist),
+			VRFontHandler::getInstance()->renderTextBox(std::to_string((long double)dist),
 				endMeasure.x , endMeasure.y - 0.1, endMeasure.z,
 				0.6, 0.1, VRFontHandler::LEFT, true);
 			glPopMatrix();

@@ -2,7 +2,7 @@
 #include <windows.h>
 #endif
 #include <GL/gl.h>
-
+#include <math.h>
 #include "VRMenu.h"
 #include "VRFontHandler.h"
 #include "VRMenuElement.h"

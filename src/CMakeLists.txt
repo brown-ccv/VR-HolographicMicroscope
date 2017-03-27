@@ -8,6 +8,7 @@ FIND_PACKAGE(OpenCV REQUIRED )
 FIND_PACKAGE(FTGL REQUIRED )
 FIND_PACKAGE(PNG REQUIRED )
 FIND_PACKAGE(ZLIB REQUIRED )
+FIND_PACKAGE(Freetype REQUIRED) # if it fails, check this:
 
 message("-- GLM includes: " ${GLM_INCLUDE_DIR})
 message("-- OpenGL includes: " ${OPENGL_INCLUDE_DIR})
@@ -43,6 +44,7 @@ add_executable(Holo-VR
   VRMenuHandler.h
 )
 INCLUDE_DIRECTORIES(${OpenCV_INCLUDE_DIRS})
+INCLUDE_DIRECTORIES(${FREETYPE_INCLUDE_DIRS})
 
 target_link_libraries(Holo-VR
   ${MINVR_LIBRARY}

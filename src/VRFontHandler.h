@@ -2,7 +2,7 @@
 #define VRFONT_H_
 
 #include <FTGL/ftgl.h>
-
+#include <string>
 
 class VRFontHandler
 	{

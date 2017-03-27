@@ -17,6 +17,10 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 message("-- Make install goes to: " ${CMAKE_INSTALL_PREFIX})
 
+
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # To distinguish between debugging, release, and other builds, we'll
 # add a postfix to the name of the lib or exe that we generate.
 
