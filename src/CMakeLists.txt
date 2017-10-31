@@ -32,6 +32,8 @@ add_executable(Holo-VR
   VRMenuElement.cpp
   VRButton.h
   VRButton.cpp
+  VRToggle.h
+  VRToggle.cpp
   VRTextBox.h
   VRTextBox.cpp
   VRMultiLineTextBox.h

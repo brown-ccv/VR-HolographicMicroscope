@@ -26,6 +26,7 @@
 #include "VRMultiLineTextBox.h"
 #include "VRTextBox.h"
 #include "VRGraph.h"
+#include "VRToggle.h"
 using namespace MinVR;
 
 #include <opencv2/core/core.hpp>
@@ -39,11 +40,28 @@ using namespace MinVR;
 #define deg2rad (3.14159265/180.0)
 // rad2deg * radians = degrees
 #define rad2deg (180.0/3.14159265)
+#define 	M_PI   3.14159265358979323846	/* pi */
 
 #define REPORTNAME "reportRaw_refined.xml"
+int skip_nth_Image = 1;
+double min_Z = 500;
+double max_Z = 25000;
+bool draw_Boundary = true;
 
-#define SCALE 300.0
-#define Z_SCALE 10.0
+#define MOVIE_FPS_MODIFIER 1.0/6.0
+#define LOAD_LIMIT 1000000000
+#define SHOW_LIMIT 7
+#define SCALE 200.0
+#define Z_SCALE 1.0 //10
+#define MOVE_SCALE 5.0f;
+
+
+#define ALLOW_ROTATE 1
+
+#define SCREEN_TO_SOURCE 100000.0f
+#define PIXEL_SIZE 7.4f
+#define RATIO_P_TO_UM 1024.0f / SCALE / SCREEN_TO_SOURCE * PIXEL_SIZE 
+
 
 #ifdef _MSC_VER
 	#define slash "\\"
@@ -61,6 +79,14 @@ struct hologram {
 	int setID;
 };
 
+
+int mode = 0;
+bool show_menu = 0;
+bool move_menu = 1;
+bool show_measure = 1;
+bool show_info = 1;
+bool play = false
+;
 struct DataSet
 {
 	std::vector <hologram> quads;
@@ -173,19 +199,19 @@ void addHologram(float x, float y, float z, float width, float height, std::stri
 	hologram q;
 	q.vertices[0][0] = (x - width / 2) / SCALE;
 	q.vertices[0][1] = -(y + height / 2) / SCALE;
-	q.vertices[0][2] = (z) / SCALE / Z_SCALE;
+	q.vertices[0][2] = (-z + min_Z) / SCALE / Z_SCALE;
 
 	q.vertices[1][0] = (x + width / 2) / SCALE;
 	q.vertices[1][1] = -(y + height / 2) / SCALE;
-	q.vertices[1][2] = (z) / SCALE / Z_SCALE;
+	q.vertices[1][2] = (-z + min_Z) / SCALE / Z_SCALE;
 
 	q.vertices[2][0] = (x + width / 2) / SCALE;
 	q.vertices[2][1] = -(y - height / 2) / SCALE;
-	q.vertices[2][2] = (z) / SCALE / Z_SCALE;
+	q.vertices[2][2] = (-z + min_Z) / SCALE / Z_SCALE;
 
 	q.vertices[3][0] = (x - width / 2) / SCALE;
 	q.vertices[3][1] = -(y - height / 2) / SCALE;
-	q.vertices[3][2] = (z) / SCALE / Z_SCALE;
+	q.vertices[3][2] = (-z + min_Z) / SCALE / Z_SCALE;
 
 	q.esd = esd;
 	q.esv = esv;
@@ -285,18 +311,59 @@ void loadDataSet(std::string parentFolder, std::string folder, int id)
  */
 class MyVRApp : public VRApp, VRMenuHandler {
 public:
-	MyVRApp(int argc, char** argv, const std::string& configFile) : currentSet(0), VRApp(argc, argv, configFile), texturesloaded(false), movement_y(0.0), movement_x(0.0), currentMenu(0), hoverHologram(NULL), menuVisible(false), measuring(false){
-		std::vector<std::string> subdirs = ReadSubDirectories(argv[2]);
-		for (int i = 0; i < subdirs.size(); i++){
-			std::cerr << "Load " << subdirs[i] << std::endl;
-			loadDataSet(argv[2], subdirs[i], i);
+	MyVRApp(int argc, char** argv, const std::string& configFile) : currentSet(0), VRApp(argc, argv), texturesloaded(false), movement_y(0.0), movement_x(0.0), currentMenu(0), hoverHologram(NULL), menuVisible(false), measuring(false), measureSet(false){
+		if (argc >= 5)
+		{
+			mode = stoi(argv[4]);
+		}
+		if (argc >= 6)
+		{
+			min_Z = stof(argv[5]);
+		}
+		if (argc >= 7)
+		{
+			max_Z = stof(argv[6]);
+		}
+		if (argc >= 8)
+		{
+			skip_nth_Image = stoi(argv[7]);
+		}
+		if (mode == 0)
+		{
+			show_menu = 1;
+			move_menu = 1;
+			show_measure = 1;
+			show_info = 1;
+		}
+		else if (mode == 1)
+		{
+			show_menu = 0;
+			move_menu = 0;
+			show_measure = 1;
+			show_info = 1;
+		}
+		else if (mode == 2)
+		{
+			show_menu = 0;
+			move_menu = 1;
+			show_measure = 0;
+			show_info = 0;
+			play = true;
+		}
+
+		menupose = VRMatrix4::translation(VRVector3(-1, 0.9, 0)) * VRMatrix4::rotationY(M_PI / 2);
+		std::vector<std::string> subdirs = ReadSubDirectories(argv[3]);
+		for (int i = 0; i < subdirs.size() && i < LOAD_LIMIT; i++){
+			if (i % skip_nth_Image == 0){
+				std::cerr << "Load " << subdirs[i] << std::endl;
+				loadDataSet(argv[3], subdirs[i], i);
+			}
 		}
 
 		centerHologram(data[0]);
 		computeHologramSize();
 		currentSet = 0;
 		graph_currentValue = 0;
-
 		createMenu();
     	}
 
@@ -308,20 +375,28 @@ public:
 
 	void createMenu()
 	{
-		VRMenu * ctd_data_current_menu = new VRMenu(0.5, 0.5, 2, 10, "CTD data current Hologram");
-		ctd_data_current_filename = new VRTextBox("ctd_data_current_filename", data[0].filename, VRFontHandler::LEFT);
-		ctd_data_current_menu->addElement(ctd_data_current_filename, 1, 1, 2, 1);
-		ctd_data_current_textBox_valueNames = new VRMultiLineTextBox("ctd_data_current_textBox_valueNames", data[0].value_names, VRFontHandler::RIGHT);
-		ctd_data_current_menu->addElement(ctd_data_current_textBox_valueNames, 1, 2, 1, 9);
-		ctd_data_current_textBox_values = new VRMultiLineTextBox("ctd_data_current_textBox_values", data[0].values, VRFontHandler::LEFT);
-		ctd_data_current_menu->addElement(ctd_data_current_textBox_values, 2, 2, 1, 9);
-		menus.push_back(ctd_data_current_menu);
+		
+			VRMenu * ctd_data_current_menu = new VRMenu(0.5, 0.5, 2, 10, "CTD data current Hologram");
+			ctd_data_current_filename = new VRTextBox("ctd_data_current_filename", data[0].filename, VRFontHandler::LEFT);
+			ctd_data_current_menu->addElement(ctd_data_current_filename, 1, 1, 2, 1);
+			ctd_data_current_textBox_valueNames = new VRMultiLineTextBox("ctd_data_current_textBox_valueNames", data[0].value_names, VRFontHandler::RIGHT);
+			ctd_data_current_menu->addElement(ctd_data_current_textBox_valueNames, 1, 2, 1, 9);
+			ctd_data_current_textBox_values = new VRMultiLineTextBox("ctd_data_current_textBox_values", data[0].values, VRFontHandler::LEFT);
+			ctd_data_current_menu->addElement(ctd_data_current_textBox_values, 2, 2, 1, 9);
 
-		VRMenu * ctd_data_graph_menu = new VRMenu(0.5, 0.5, 7, 10, "CTD data");
-		ctd_data_graph_next = new VRButton("ctd_data_graph_next", ">");
-		ctd_data_graph_menu->addElement(ctd_data_graph_next, 7, 1, 1, 1);
-		ctd_data_graph_prev = new VRButton("ctd_data_graph_prev", "<");
-		ctd_data_graph_menu->addElement(ctd_data_graph_prev, 1, 1, 1, 1);
+		if (mode != 2){
+			menus.push_back(ctd_data_current_menu);
+			ctd_data_current_menu->addMenuHandler(this);
+			ctd_data_current_menu->setVisible(false);
+		}
+
+		VRMenu * ctd_data_graph_menu = new VRMenu(0.5, 0.5, 7, 10, (mode != 2) ? "CTD data" : "Movie");
+		if (mode != 2){
+			ctd_data_graph_next = new VRButton("ctd_data_graph_next", ">");
+			ctd_data_graph_menu->addElement(ctd_data_graph_next, 7, 1, 1, 1);
+			ctd_data_graph_prev = new VRButton("ctd_data_graph_prev", "<");
+			ctd_data_graph_menu->addElement(ctd_data_graph_prev, 1, 1, 1, 1);
+		}
 		if (data[0].value_names.size() > graph_currentValue){
 			ctd_data_graph_ValueName = new VRTextBox("ctd_data_graph_ValueName", data[0].value_names[graph_currentValue]);
 			ctd_data_graph_currentValue = new VRTextBox("ctd_data_graph_currentValue", data[0].values[graph_currentValue]);
@@ -331,18 +406,23 @@ public:
 			ctd_data_graph_ValueName = new VRTextBox("ctd_data_graph_ValueName", "");
 			ctd_data_graph_currentValue = new VRTextBox("ctd_data_graph_currentValue", "");
 		}
-		ctd_data_graph_menu->addElement(ctd_data_graph_ValueName, 2, 1, 5, 1);
-		ctd_data_graph_menu->addElement(ctd_data_graph_currentValue, 1, 2, 7, 1);
+
+		if (mode == 2)
+		{
+			ctd_data_graph_play = new VRToggle("ctd_data_graph_play", "Play");
+			ctd_data_graph_play->setToggled(true);
+			ctd_data_graph_menu->addElement(ctd_data_graph_play, 1, 1, 7, 1);
+		}
+
+		ctd_data_graph_menu->addElement(ctd_data_graph_ValueName, (mode != 2) ? 2 : 1, (mode != 2) ? 1 : 2, (mode != 2) ? 5 : 7, 1);
+		ctd_data_graph_menu->addElement(ctd_data_graph_currentValue, 1, (mode != 2) ? 2 : 3, 7, 1);
 
 		ctd_data_graph_graph = new VRGraph("ctd_data_graph_graph", getDataFromHologram(graph_currentValue));
 		ctd_data_graph_graph->setCurrent(currentSet);
 		ctd_data_graph_menu->addElement(ctd_data_graph_graph, 1, 3, 7, 7);
 		menus.push_back(ctd_data_graph_menu);
 
-		ctd_data_current_menu->addMenuHandler(this);
 		ctd_data_graph_menu->addMenuHandler(this);
-
-		ctd_data_current_menu->setVisible(false);
 	}
 
 	void drawMenus()
@@ -357,7 +437,7 @@ public:
 			(*it)->setTransformation(menupose);
 
 		VRPoint3 pos = controllerpose * VRPoint3(0, 0, 0);
-		VRVector3 dir = controllerpose * VRVector3(0, 0, -1);
+		VRVector3 dir = controllerpose * VRVector3(0, 0, -2);
 
 		double distance;
 		for (std::vector<VRMenu*>::const_iterator it = menus.begin(); it != menus.end(); ++it){
@@ -373,28 +453,42 @@ public:
 
 	void displayMenu(int menuID)
 	{
-		if (menuID == -1)
-			menuVisible = false;
-		for (int i = 0; i < menus.size(); i++){
-			if (i != menuID)
-			{
-				menus[i]->setVisible(false);
-			}
-			else
-			{
-				menus[i]->setVisible(true);
+		std::cerr << menus.size() << std::endl;
+		if (show_menu || move_menu){
+			if (menuID == -1)
+				menuVisible = false;
+			for (int i = 0; i < menus.size(); i++){
+				if (i != menuID)
+				{
+					menus[i]->setVisible(false);
+				}
+				else
+				{
+					menus[i]->setVisible(true);
+				}
 			}
 		}
 	}
 
 	void setMeasurePoint(bool setStart)
 	{
+		if (setStart)
+		{
+			measureSet = false;
+		}
 		VRPoint3 pos = roompose.inverse() * controllerpose * VRPoint3(0, 0, 0);
 		VRVector3 dir = roompose.inverse() * controllerpose * VRVector3(0, 0, -5);
 
-		int maxRange = 10.0f / hologramSize[2];
+		int maxRange = 0;
+		
 		int start = currentSet - maxRange;
 		int end = currentSet + maxRange;
+		if (mode != 0)
+		{
+			start = 0;
+			end = data.size() - 1;
+		}
+		
 		if (start < 0)
 			start = 0;
 		if (end > data.size() - 1)
@@ -404,7 +498,7 @@ public:
 
 		for (int i = start; i <= end; i++){
 			for (std::vector<hologram>::iterator it = data[i].quads.begin(); it != data[i].quads.end(); ++it){
-				double z = it->vertices[0][2] + it->setID * hologramSize[2];
+				double z = (mode == 0) ? it->vertices[0][2] - it->setID * hologramSize[2] : it->vertices[0][2];
 				double d = (z - pos.z) / dir.z;
 
 				if (d > 0 && d < distance){
@@ -415,8 +509,9 @@ public:
 						&& m_interactionPoint.y <= it->vertices[2][1])
 					{
 						distance = d;
-						if (setStart) startMeasure = m_interactionPoint;
+						if (setStart)startMeasure = m_interactionPoint;
 						endMeasure = m_interactionPoint;
+						measureSet = true;
 					}
 				}
 			}
@@ -432,6 +527,14 @@ public:
 		int maxRange = 10.0f / hologramSize[2];
 		int start = currentSet - maxRange;
 		int end = currentSet + maxRange;
+
+		if (mode != 0)
+		{
+			start = 0;
+			end = data.size() - 1;
+		}
+
+
 		if (start < 0) 
 			start = 0;
 		if (end > data.size() - 1)
@@ -441,7 +544,7 @@ public:
 
 		for (int i = start; i <= end; i++){
 			for (std::vector<hologram>::iterator it = data[i].quads.begin(); it != data[i].quads.end(); ++it){
-				double z = it->vertices[0][2] + it->setID * hologramSize[2];
+				double z = (mode == 0) ? it->vertices[0][2] - it->setID * hologramSize[2] : it->vertices[0][2];
 				double d = (z - pos.z) / dir.z;
 
 				if (d > 0 && d < distance){
@@ -491,75 +594,78 @@ public:
 
 	// Callback for event handling, inherited from VRApp
 	virtual void onVREvent(const VREvent &event) {
-		if (startsWith(event.getName(), "Wand0_Move")){
-			controllerpose = event.getDataAsFloatArray("Transform");
-		}
-		if(event.getName() == "Wand_Left_Btn_Down") {
-			currentSet ++;
-			if(currentSet > data.size())currentSet = 0;
-		}
-		if(event.getName() == "Wand_Joystick_Y_Change") {
-			movement_y = event.getDataAsFloat("AnalogValue");
-		}
-		if(event.getName() == "Wand_Joystick_X_Change") {
-			movement_x = event.getDataAsFloat("AnalogValue");
-		}	
-
-		if (event.getName() == "HTC_Controller_2")
+		if (event.getName() == "HTC_Controller_Left")
 		{
-			if (event.getInternal()->getDataIndex()->exists("/HTC_Controller_2/Pose")){
-				menupose = event.getDataAsFloatArray("Pose");
-				menupose = menupose * VRMatrix4::rotationX(deg2rad * -90) * VRMatrix4::translation(VRVector3(0,-0.2,0));
+			if (event.getInternal()->getDataIndex()->exists("/HTC_Controller_Left/Pose")){
+				if (!move_menu){
+					menupose = event.getDataAsFloatArray("Pose");
+					menupose = menupose *  VRMatrix4::translation(VRVector3(0, -0.2, 0));
+				}
 				updateMenus();
 			}
 		}
 
-		if (event.getName() == "HTC_Controller_1_Axis1Button_Pressed"){
+		if (event.getName() == "HTC_Controller_Right_Axis1Button_Pressed"){
 			clickMenus(true);
 			setMeasurePoint(true);
 			measuring = true;
 		}
-		if (event.getName() == "HTC_Controller_1_Axis1Button_Released"){
+		if (event.getName() == "HTC_Controller_Right_Axis1Button_Released"){
 			clickMenus(false);
 			measuring = false;
 		}
-		if (event.getName() == "HTC_Controller_2_Axis1Button_Pressed"){
+		if (event.getName() == "HTC_Controller_Left_Axis1Button_Pressed"){
 			displayMenu(currentMenu);
+			if (move_menu) updateMenus();
 		}
-		if (event.getName() == "HTC_Controller_2_Axis1Button_Released"){
-			displayMenu(-1);
+		if (event.getName() == "HTC_Controller_Left_Axis1Button_Released"){
+			if (!move_menu) displayMenu(-1);
 		}
-		if (event.getName() == "HTC_Controller_2_Axis0Button_Pressed"){
-			double val = event.getInternal()->getDataIndex()->getValue("/HTC_Controller_2/State/Axis0/XPos");
-			if (val > 0){
-				currentMenu++;	
+		if (event.getName() == "HTC_Controller_Right_AButton_Pressed"){
+			if (mode != 2 && (show_menu || move_menu)){
+				currentMenu++;
+				currentMenu = currentMenu % menus.size();
+				displayMenu(currentMenu);
 			}
-			else
-			{
-				currentMenu--;
+			else{
+				float tmp = currentSet - 1;
+				if (tmp < 0) tmp = data.size() - 1;
+				setCurrentSet(tmp);			
 			}
-			currentMenu = currentMenu % menus.size();
-			displayMenu(currentMenu);
+		}
+		if (event.getName() == "HTC_Controller_Right_ApplicationMenuButton_Pressed" && (mode == 2)){
+			
+			float tmp = currentSet + 1;
+			if (tmp >= data.size()) tmp = 0;
+			setCurrentSet(tmp);	
 		}
 
-
-		if (event.getName() == "HTC_Controller_1")
+		if (event.getName() == "HTC_Controller_Left" && move_menu)
 		{
-			if(event.getInternal()->getDataIndex()->exists("/HTC_Controller_1/Pose")){
+			if (event.getInternal()->getDataIndex()->exists("/HTC_Controller_Left/State/Axis1Button_Pressed") &&
+				(int) event.getInternal()->getDataIndex()->getValue("/HTC_Controller_Left/State/Axis1Button_Pressed"))
+			{
+				if (event.getInternal()->getDataIndex()->exists("/HTC_Controller_Left/Pose")){
+					menupose = event.getDataAsFloatArray("Pose");
+					menupose = menupose * VRMatrix4::translation(VRVector3(0, -0.2, 0));;
+					updateMenus();
+				}
+			}
+		}
+
+		if (event.getName() == "HTC_Controller_Right")
+		{
+			if(event.getInternal()->getDataIndex()->exists("/HTC_Controller_Right/Pose")){
 				controllerpose = event.getDataAsFloatArray("Pose");
 				updateMenus();
 				checkHologramIntersect();
 				if (measuring) setMeasurePoint(false);
 			}
-			if (event.getInternal()->getDataIndex()->exists("/HTC_Controller_1/State/Axis0Button_Pressed")&&
-				(int) event.getInternal()->getDataIndex()->getValue("/HTC_Controller_1/State/Axis0Button_Pressed")){
-				movement_x = 0.0; //event.getInternal()->getDataIndex()->getValue("/HTC_Controller_1/State/Axis0/XPos");
-				movement_y = event.getInternal()->getDataIndex()->getValue("/HTC_Controller_1/State/Axis0/YPos");
-			}
-			else
+
 			{
-				movement_y = 0;
-				movement_x = 0;
+			
+				movement_x = (ALLOW_ROTATE) ? 0.2f * (float) event.getInternal()->getDataIndex()->getValue("/HTC_Controller_Right/State/Axis0/XPos") : 0.0; 
+				movement_y = (float)event.getInternal()->getDataIndex()->getValue("/HTC_Controller_Right/State/Axis0/YPos") * MOVE_SCALE;
 			}
 		}
 
@@ -573,8 +679,14 @@ public:
 	{
 		if (element == ctd_data_graph_graph)
 		{
-			centerHologram(data[ctd_data_graph_graph->getSelection()]);
-			setCurrentSet();
+			if (mode != 2){
+				centerHologram(data[ctd_data_graph_graph->getSelection()]);
+				setCurrentSet();
+			}
+			else
+			{
+				setCurrentSet(ctd_data_graph_graph->getSelection());
+			}
 		}
 		if (element == ctd_data_graph_next)
 		{
@@ -590,6 +702,10 @@ public:
 				graph_currentValue = data[0].value_names.size() - 1;
 			updateGraph();
 		}
+		if (element == ctd_data_graph_play)
+		{
+			play = ctd_data_graph_play->isToggled();
+		}
 	}
 
 	// Callback for rendering, inherited from VRRenderHandler
@@ -600,18 +716,33 @@ public:
 				uploadTextures(data[i]);
 
 			texturesloaded = true;
+			updateMenus();
+			displayMenu(currentMenu);
 		}
 
 		if(fabs(movement_x) > 0.1 || fabs(movement_y) > 0.1){
-			VRVector3 offset = 1.0 * controllerpose * VRVector3(0, 0, movement_y);
+			VRVector3 offset = 0.1 * controllerpose * VRVector3(0, 0, movement_y);
 			VRMatrix4 trans = VRMatrix4::translation(offset);
 			roompose = trans * roompose;
 
 			VRMatrix4 rot = VRMatrix4::rotationY(movement_x / 10 / CV_PI);
 			roompose = rot * roompose;	
 		}
-
-		setCurrentSet();
+		if (mode == 2)
+		{
+			if (play){
+				float tmp = MOVIE_FPS_MODIFIER + currentSet;
+				if (tmp > data.size()) tmp = 0;
+				setCurrentSet(tmp);
+			}
+			else
+			{
+				setCurrentSet(currentSet);
+			}
+		}
+		else{
+			setCurrentSet();
+		}
 	}
 
 	// Callback for rendering, inherited from VRRenderHandler
@@ -619,7 +750,7 @@ public:
 		glDisable(GL_DEPTH_TEST);
 		glDepthFunc(GL_LEQUAL);
 		glClearDepth(1.0f);
-		glClearColor(0.2, 0.2, 0.3, 1.f);
+		glClearColor(0.0, 0.0, 0.0, 1.f);
 		glDisable(GL_LIGHTING);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -631,7 +762,7 @@ public:
 
     		glPushMatrix();
 			glMultMatrixf(roompose.getArray());
-			int maxRange = 40;
+			int maxRange = (mode ==0) ? SHOW_LIMIT : (mode ==1)? 100000 : 0;
 			int start = currentSet - maxRange;
 			int end = currentSet + maxRange;
 			if (start < 0)
@@ -641,55 +772,69 @@ public:
 
 			for (int i = start; i <= end; i++)
 				drawQuads(data[i]);
+
+			glEnable(GL_DEPTH_TEST);
+			if (draw_Boundary)
+			{
+				for (int i = start; i <= end; i++)
+					drawBoundaries(data[i]);
+			}
 		glPopMatrix();
 
-		if (hoverHologram != NULL)
-		{
-			glPushMatrix();
-			glMultMatrixf(roompose.getArray());
-			glBegin(GL_LINE_STRIP);                
-			glColor3f(1.0f, 1.0f, 0.5f);
-			glVertex3f(hoverHologram->vertices[0][0], hoverHologram->vertices[0][1], hoverHologram->vertices[0][2] + hoverHologram->setID * hologramSize[2]);
-			glVertex3f(hoverHologram->vertices[1][0], hoverHologram->vertices[1][1], hoverHologram->vertices[1][2] + hoverHologram->setID * hologramSize[2]);
-			glVertex3f(hoverHologram->vertices[2][0], hoverHologram->vertices[2][1], hoverHologram->vertices[2][2] + hoverHologram->setID * hologramSize[2]);
-			glVertex3f(hoverHologram->vertices[3][0], hoverHologram->vertices[3][1], hoverHologram->vertices[3][2] + hoverHologram->setID * hologramSize[2]);
-			glVertex3f(hoverHologram->vertices[0][0], hoverHologram->vertices[0][1], hoverHologram->vertices[0][2] + hoverHologram->setID * hologramSize[2]);
-			glEnd();
-			
 
-			std::vector<std::string> text;
-			text.push_back("Type:  " + hoverHologram->type);
-			text.push_back("ESD:  " + std::to_string((long double)hoverHologram->esd));
-			text.push_back("ESV:  " + std::to_string((long double)hoverHologram->esv));
-			VRFontHandler::getInstance()->renderMultiLineTextBox(text, 
-				hoverHologram->vertices[1][0], hoverHologram->vertices[1][1]-0.3, hoverHologram->vertices[0][2] + hoverHologram->setID * hologramSize[2],
-				0.6, 0.3, VRFontHandler::LEFT, true);
-			glPopMatrix();
+
+		if (show_info){
+			if (hoverHologram != NULL)
+			{
+				std::cerr << "Hover" << std::endl;
+				glPushMatrix();
+				glMultMatrixf(roompose.getArray());
+				glBegin(GL_LINE_STRIP);
+				glColor3f(1.0f, 1.0f, 0.5f);
+				double offset = (mode == 0) ? -hoverHologram->setID  * hologramSize[2] : 0;
+				glVertex3f(hoverHologram->vertices[0][0], hoverHologram->vertices[0][1], hoverHologram->vertices[0][2] + offset);
+				glVertex3f(hoverHologram->vertices[1][0], hoverHologram->vertices[1][1], hoverHologram->vertices[1][2] + offset);
+				glVertex3f(hoverHologram->vertices[2][0], hoverHologram->vertices[2][1], hoverHologram->vertices[2][2] + offset);
+				glVertex3f(hoverHologram->vertices[3][0], hoverHologram->vertices[3][1], hoverHologram->vertices[3][2] + offset);
+				glVertex3f(hoverHologram->vertices[0][0], hoverHologram->vertices[0][1], hoverHologram->vertices[0][2] + offset);
+				glEnd();
+
+
+				std::vector<std::string> text;
+				//text.push_back("Type:  " + hoverHologram->type);
+				text.push_back("ESD:  " + std::to_string((long double)hoverHologram->esd));
+				text.push_back("ESV:  " + std::to_string((long double)hoverHologram->esv));
+				VRFontHandler::getInstance()->renderMultiLineTextBox(text,
+					hoverHologram->vertices[1][0], hoverHologram->vertices[1][1] - 0.3, hoverHologram->vertices[0][2] + offset,
+					0.6, 0.3, VRFontHandler::LEFT, (controllerpose * VRVector3(0,0,-1)).z > 0 );
+				glPopMatrix();
+			}
 		}
 		
-		if (measuring)
-		{
-			glPushMatrix();
-			glMultMatrixf(roompose.getArray());
-			glBegin(GL_LINE_STRIP);
-			glColor3f(0.9f, 0.0f, 0.0f);
-			glVertex3f(startMeasure.x, startMeasure.y, startMeasure.z);
-			glVertex3f(endMeasure.x, endMeasure.y, endMeasure.z);
-			glEnd();
+		if (show_measure){
+			if (measureSet)
+			{
+				glPushMatrix();
+				glMultMatrixf(roompose.getArray());
+				glBegin(GL_LINE_STRIP);
+				glColor3f(0.9f, 0.0f, 0.0f);
+				glVertex3f(startMeasure.x, startMeasure.y, startMeasure.z);
+				glVertex3f(endMeasure.x, endMeasure.y, endMeasure.z);
+				glEnd();
 
-			double dist = std::sqrt(
-				std::pow((startMeasure.x - endMeasure.x) * SCALE, 2) +
-				std::pow((startMeasure.y - endMeasure.y) * SCALE, 2) +
-				std::pow((startMeasure.z - endMeasure.z) * SCALE * Z_SCALE, 2)
-				);
+				double dist = std::sqrt(
+					std::pow((startMeasure.x - endMeasure.x) * SCALE, 2) +
+					std::pow((startMeasure.y - endMeasure.y) * SCALE, 2) +
+					std::pow((startMeasure.z - endMeasure.z) * SCALE * Z_SCALE, 2)
+					);
 
-			VRFontHandler::getInstance()->renderTextBox(std::to_string((long double)dist),
-				endMeasure.x , endMeasure.y - 0.1, endMeasure.z,
-				0.6, 0.1, VRFontHandler::LEFT, true);
-			glPopMatrix();
+				VRFontHandler::getInstance()->renderTextBox(std::to_string((long double)dist),
+					endMeasure.x, endMeasure.y - 0.1, endMeasure.z,
+					0.6, 0.1, VRFontHandler::LEFT, (controllerpose * VRVector3(0, 0, -1)).z > 0);
+				glPopMatrix();
+			}
 		}
 
-		glEnable(GL_DEPTH_TEST);
 		glPushMatrix();
 			glMultMatrixf(controllerpose.getArray());
 			glBegin(GL_LINES);                // Begin drawing the color cube with 6 quads
@@ -700,41 +845,91 @@ public:
 			glEnd();  // End of drawing color-cube
 		glPopMatrix();
 
-		drawMenus();
+		if (show_menu || move_menu){
+			drawMenus();
+		}
+	}
 
+	void drawBoundaries(DataSet &set)
+	{
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		double offset = (mode == 0) ? -set.id * hologramSize[2] : 0;
+		double alpha = 1.0 / (3 * (std::fabs((float) currentSet - set.id) + 1));
+		glColor4f(alpha, alpha, 0.0f, alpha);
+
+		for (int i = 0; i < set.quads.size(); i++)
+		{	
+			glBegin(GL_LINE_STRIP);
+			glVertex3f(-RATIO_P_TO_UM * min_Z, RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(RATIO_P_TO_UM * min_Z, RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(RATIO_P_TO_UM * min_Z, -RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(-RATIO_P_TO_UM * min_Z, -RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(-RATIO_P_TO_UM * min_Z, RATIO_P_TO_UM * min_Z, offset);
+			glEnd();
+
+			glBegin(GL_LINE_STRIP);
+			glVertex3f(-RATIO_P_TO_UM * max_Z, RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+			glVertex3f(RATIO_P_TO_UM * max_Z, RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+			glVertex3f(RATIO_P_TO_UM * max_Z, -RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+			glVertex3f(-RATIO_P_TO_UM * max_Z, -RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+			glVertex3f(-RATIO_P_TO_UM * max_Z, RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+			glEnd();
+
+			glBegin(GL_LINES);
+			glVertex3f(-RATIO_P_TO_UM * min_Z, RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(-RATIO_P_TO_UM * max_Z, RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+
+			glVertex3f(RATIO_P_TO_UM * min_Z, RATIO_P_TO_UM * min_Z,offset);
+			glVertex3f(RATIO_P_TO_UM * max_Z, RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+
+			glVertex3f(RATIO_P_TO_UM * min_Z, -RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(RATIO_P_TO_UM * max_Z, -RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+
+			glVertex3f(-RATIO_P_TO_UM * min_Z, -RATIO_P_TO_UM * min_Z, offset);
+			glVertex3f(-RATIO_P_TO_UM * max_Z, -RATIO_P_TO_UM * max_Z, -hologramSize[2] + offset);
+			glEnd();
+		}
+		glDisable(GL_BLEND);
 	}
 
 	void drawQuads(DataSet &set)
 	{
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_DST_ALPHA);
+		double offset = (mode == 0) ? -set.id * hologramSize[2] : 0;
+		glEnable(GL_TEXTURE_2D);
+
 		for (int i = 0; i < set.quads.size(); i++)
 		{
-			glEnable(GL_TEXTURE_2D);
+			
 			glBindTexture(GL_TEXTURE_2D, set.quads[i].texture);
 			glBegin(GL_QUADS);                // Begin drawing the color cube with 6 quads
 			glColor3f(1.0f, 1.0f, 1.0f);   
 			glTexCoord2f(0, 1);
-			glVertex3f(set.quads[i].vertices[0][0], set.quads[i].vertices[0][1], set.quads[i].vertices[0][2] + set.id * hologramSize[2]);
+			glVertex3f(set.quads[i].vertices[0][0], set.quads[i].vertices[0][1], set.quads[i].vertices[0][2] + offset);
 			glTexCoord2f(1, 1);
-			glVertex3f(set.quads[i].vertices[1][0], set.quads[i].vertices[1][1], set.quads[i].vertices[1][2] + set.id * hologramSize[2]);
+			glVertex3f(set.quads[i].vertices[1][0], set.quads[i].vertices[1][1], set.quads[i].vertices[1][2] + offset);
 			glTexCoord2f(1, 0);
-			glVertex3f(set.quads[i].vertices[2][0], set.quads[i].vertices[2][1], set.quads[i].vertices[2][2] + set.id * hologramSize[2]);
+			glVertex3f(set.quads[i].vertices[2][0], set.quads[i].vertices[2][1], set.quads[i].vertices[2][2] + offset);
 			glTexCoord2f(0, 0);
-			glVertex3f(set.quads[i].vertices[3][0], set.quads[i].vertices[3][1], set.quads[i].vertices[3][2] + set.id * hologramSize[2]);
-			glEnd();
-			glDisable(GL_TEXTURE_2D);
-			glBindTexture(GL_TEXTURE_2D, 0);
+			glVertex3f(set.quads[i].vertices[3][0], set.quads[i].vertices[3][1], set.quads[i].vertices[3][2] + offset);
+			glEnd();		
 		}
+		glDisable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, 0);
 		glDisable(GL_BLEND);
 	}
 
-	void setCurrentSet()
+	void setCurrentSet(float id = -1)
 	{ 
-		int new_currentSet = roompose.inverse().getColumn(3)[2] / hologramSize[2] - 1;
-		if (new_currentSet < 0) new_currentSet = 0;
-		if (new_currentSet >= data.size()) new_currentSet = data.size() - 1;
-
+		float new_currentSet = id;
+		if (new_currentSet < 0){
+			new_currentSet = roompose.inverse().getColumn(3)[2] / -hologramSize[2];
+			if (new_currentSet < 0) new_currentSet = 0;
+			if (new_currentSet >= data.size()) new_currentSet = data.size() - 1;
+		}
 		if (new_currentSet != currentSet)
 		{
 			currentSet = new_currentSet;
@@ -794,7 +989,8 @@ public:
 		y = y / set.quads.size() / 4;
 		z = z / set.quads.size() / 4;
 
-		roompose = VRMatrix4::translation(VRVector3(-x, -y, -z -set.id * hologramSize[2]));
+		double offset = (mode == 0) ? set.id * hologramSize[2] : 0;
+		roompose = VRMatrix4::translation(VRVector3(0, 0, hologramSize[2] *0.5 + offset));
 	}
 
 	void computeHologramSize()
@@ -819,6 +1015,7 @@ public:
 		}
 
 		hologramSize = max_vector3 - min_vector3;
+		hologramSize[2] = (max_Z - min_Z) / SCALE / Z_SCALE;;
 	}
 
 	void uploadTextures(DataSet &set)
@@ -882,16 +1079,18 @@ protected:
 	VRButton * ctd_data_graph_prev;
 	VRTextBox * ctd_data_graph_currentValue;
 	VRTextBox * ctd_data_graph_ValueName;
+	VRToggle * ctd_data_graph_play;
 	int graph_currentValue;
 
 	bool measuring;
+	bool measureSet;
 	VRPoint3 startMeasure;
 	VRPoint3 endMeasure;
 
 	VRMatrix4 menupose;
 	VRMatrix4 controllerpose;
 	VRMatrix4 roompose;
-	unsigned int currentSet;
+	float currentSet;
 	float movement_y, movement_x;
 	VRVector3 hologramSize;
 };
