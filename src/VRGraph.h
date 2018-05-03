@@ -8,7 +8,7 @@
 
 class VRGraph : public VRMenuElement {
 public:
-	VRGraph(std::string name, std::vector<double> data);
+	VRGraph(std::string name, std::vector<double> data, bool vertical);
 	virtual ~VRGraph();
 
 	virtual void addToMenu(VRMenu * menu, double x, double y, double width, double height);
@@ -28,7 +28,7 @@ private:
 	int m_current;
 	int m_selection;
 	bool m_mouseDown;
-
+	bool m_vertical;
 	void computeBounds();
 };
 

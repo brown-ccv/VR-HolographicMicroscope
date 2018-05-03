@@ -77,6 +77,7 @@ struct hologram {
 	float esv;
 	std::string type;
 	int setID;
+	int ID;
 };
 
 
@@ -85,8 +86,10 @@ bool show_menu = 0;
 bool move_menu = 1;
 bool show_measure = 1;
 bool show_info = 1;
-bool play = false
-;
+bool play = false;
+bool trace = false;
+float frame_strength = 1.0;
+
 struct DataSet
 {
 	std::vector <hologram> quads;
@@ -98,6 +101,20 @@ struct DataSet
 };
 
 std::vector <DataSet> data;
+
+int getContourByID(int frame, int contourID)
+{
+	if (frame < 0 || frame >= data.size())
+		return -1;
+
+	for (int i = 0; i < data[frame].quads.size(); i++)
+	{
+		if (data[frame].quads[i].ID == contourID)
+			return i;
+	}
+
+	return -1;
+}
 
 std::istream& safeGetline(std::istream& is, std::string& t)
 {
@@ -194,7 +211,7 @@ std::vector<string> ReadSubDirectories(const std::string &refcstrRootDirectory)
 	return subdirectories;
 }
 
-void addHologram(float x, float y, float z, float width, float height, std::string filename, double esd, double esv, std::string type, DataSet &set)
+void addHologram(float x, float y, float z, float width, float height, std::string filename, double esd, double esv, std::string type, DataSet &set, int ID)
 {
 	hologram q;
 	q.vertices[0][0] = (x - width / 2) / SCALE;
@@ -217,6 +234,7 @@ void addHologram(float x, float y, float z, float width, float height, std::stri
 	q.esv = esv;
 	q.type = type;
 	q.setID = set.id;
+	q.ID = ID;
 	set.quads.push_back(q);
 
 	cv::Mat image_orig = cv::imread(filename, cv::IMREAD_COLOR);
@@ -298,9 +316,13 @@ void loadDataSet(std::string parentFolder, std::string folder, int id)
 						std::atof(child->FirstChildElement("ESD")->GetText()), 
 						std::atof(child->FirstChildElement("ESV")->GetText()), 
 						"Diatom",
-						set);
+						set,
+						std::atof(child->FirstChildElement("CONTOUR")->GetText()));
 		}
+		set.values[0] = std::to_string(set.quads.size());
 	}
+	
+
 	data.push_back(set);
 }
 
@@ -328,6 +350,16 @@ public:
 		{
 			skip_nth_Image = stoi(argv[7]);
 		}
+		if (argc >= 8)
+		{
+			frame_strength = stof(argv[8]);
+		}
+		if (mode == 3)
+		{
+			mode = 2;
+			trace = true;
+		}
+
 		if (mode == 0)
 		{
 			show_menu = 1;
@@ -384,7 +416,7 @@ public:
 			ctd_data_current_textBox_values = new VRMultiLineTextBox("ctd_data_current_textBox_values", data[0].values, VRFontHandler::LEFT);
 			ctd_data_current_menu->addElement(ctd_data_current_textBox_values, 2, 2, 1, 9);
 
-		if (mode != 2){
+		if (mode != 2 ){
 			menus.push_back(ctd_data_current_menu);
 			ctd_data_current_menu->addMenuHandler(this);
 			ctd_data_current_menu->setVisible(false);
@@ -417,9 +449,9 @@ public:
 		ctd_data_graph_menu->addElement(ctd_data_graph_ValueName, (mode != 2) ? 2 : 1, (mode != 2) ? 1 : 2, (mode != 2) ? 5 : 7, 1);
 		ctd_data_graph_menu->addElement(ctd_data_graph_currentValue, 1, (mode != 2) ? 2 : 3, 7, 1);
 
-		ctd_data_graph_graph = new VRGraph("ctd_data_graph_graph", getDataFromHologram(graph_currentValue));
+		ctd_data_graph_graph = new VRGraph("ctd_data_graph_graph", getDataFromHologram(graph_currentValue), (mode!=2));
 		ctd_data_graph_graph->setCurrent(currentSet);
-		ctd_data_graph_menu->addElement(ctd_data_graph_graph, 1, 3, 7, 7);
+		ctd_data_graph_menu->addElement(ctd_data_graph_graph, 1, (mode != 2) ? 3 : 4, 7, (mode != 2) ? 7 : 6);
 		menus.push_back(ctd_data_graph_menu);
 
 		ctd_data_graph_menu->addMenuHandler(this);
@@ -779,6 +811,9 @@ public:
 				for (int i = start; i <= end; i++)
 					drawBoundaries(data[i]);
 			}
+			if (trace)
+				drawTraces(currentSet);
+
 		glPopMatrix();
 
 
@@ -857,7 +892,7 @@ public:
 
 		double offset = (mode == 0) ? -set.id * hologramSize[2] : 0;
 		double alpha = 1.0 / (3 * (std::fabs((float) currentSet - set.id) + 1));
-		glColor4f(alpha, alpha, 0.0f, alpha);
+		glColor4f(alpha* frame_strength, alpha* frame_strength, 0.0f, alpha * frame_strength);
 
 		for (int i = 0; i < set.quads.size(); i++)
 		{	
@@ -892,6 +927,42 @@ public:
 			glEnd();
 		}
 		glDisable(GL_BLEND);
+	}
+
+	void drawTraces(int frame)
+	{
+		for (int j = 0; j < data[frame].quads.size(); j++)
+		{
+			int id = data[frame].quads[j].ID;
+			int prev_slot = j;
+			for (int i = frame - 1; i > frame - 20 && i >= 0; i--)
+			{
+				int next_slot = getContourByID(i, id);
+
+				//draw
+				if (prev_slot >= 0 && next_slot >= 0){
+					float pts[2][3] = { { 0, 0, 0 }, { 0, 0, 0 } };
+					for (int y = 0; y < 3; y++)
+					{
+						for (int x = 0; x < 4; x++)
+						{
+							pts[0][y] += data[i + 1].quads[prev_slot].vertices[x][y];
+							pts[1][y] += data[i].quads[next_slot].vertices[x][y];
+						}
+						pts[0][y] /= 4.0;
+						pts[1][y] /= 4.0;
+					}
+					glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+					glBegin(GL_LINES);
+					glVertex3f(pts[0][0], pts[0][1], pts[0][2]);
+					glVertex3f(pts[1][0], pts[1][1], pts[1][2]);
+					glEnd();
+				}
+
+				//next
+				prev_slot = next_slot;
+			}
+		}
 	}
 
 	void drawQuads(DataSet &set)

@@ -6,7 +6,7 @@
 #include <limits>
 #include "VRGraph.h"
 
-VRGraph::VRGraph(std::string name, std::vector<double> data) : VRMenuElement(name, ""), m_data(data), m_current(-1), m_selection(-1), m_mouseDown(false)
+VRGraph::VRGraph(std::string name, std::vector<double> data, bool vertical) : VRMenuElement(name, ""), m_data(data), m_current(-1), m_selection(-1), m_mouseDown(false), m_vertical(vertical)
 {
 	computeBounds();
 }
@@ -34,30 +34,58 @@ void VRGraph::draw()
 	glVertex3f(m_x, m_y + m_height, Z_OFFSET);					// Top Left
 	glEnd();
 
-	glColor3f(0.0f, 0.0, 0.0f);
-	glBegin(GL_LINE_STRIP);
-	for (int i = 0; i < m_data.size(); i++){
-		if (m_data[i] != GRAPHUNDEFINEDVALUE)
-			glVertex3f(m_x + m_spacing[0] * i, m_y + (m_data[i] - m_range[0]) * m_spacing[1], Z_OFFSET);
-	}
-	glEnd();
-
-	if (m_current >= 0 && m_current < m_data.size())
-	{
-		glColor3f(0.9f, 0.0, 0.0f);
+	if (!m_vertical){
+		glColor3f(0.0f, 0.0, 0.0f);
 		glBegin(GL_LINE_STRIP);
-		glVertex3f(m_x + m_spacing[0] * m_current, m_y , Z_OFFSET);
-		glVertex3f(m_x + m_spacing[0] * m_current, m_y + (m_range[1] - m_range[0]) * m_spacing[1], Z_OFFSET);
+		for (int i = 0; i < m_data.size(); i++){
+			if (m_data[i] != GRAPHUNDEFINEDVALUE)
+				glVertex3f(m_x + m_spacing[0] * i, m_y + (m_data[i] - m_range[0]) * m_spacing[1], Z_OFFSET);
+		}
 		glEnd();
-	}
 
-	if (m_selection >= 0 && m_selection < m_data.size())
-	{
-		glColor3f(0.0f, 0.9, 0.0f);
+		if (m_current >= 0 && m_current < m_data.size())
+		{
+			glColor3f(0.9f, 0.0, 0.0f);
+			glBegin(GL_LINE_STRIP);
+			glVertex3f(m_x + m_spacing[0] * m_current, m_y, Z_OFFSET);
+			glVertex3f(m_x + m_spacing[0] * m_current, m_y + (m_range[1] - m_range[0]) * m_spacing[1], Z_OFFSET);
+			glEnd();
+		}
+
+		if (m_selection >= 0 && m_selection < m_data.size())
+		{
+			glColor3f(0.0f, 0.9, 0.0f);
+			glBegin(GL_LINE_STRIP);
+			glVertex3f(m_x + m_spacing[0] * m_selection, m_y, Z_OFFSET);
+			glVertex3f(m_x + m_spacing[0] * m_selection, m_y + (m_range[1] - m_range[0]) * m_spacing[1], Z_OFFSET);
+			glEnd();
+		}
+	} else{
+		glColor3f(0.0f, 0.0, 0.0f);
 		glBegin(GL_LINE_STRIP);
-		glVertex3f(m_x + m_spacing[0] * m_selection, m_y, Z_OFFSET);
-		glVertex3f(m_x + m_spacing[0] * m_selection, m_y + (m_range[1] - m_range[0]) * m_spacing[1], Z_OFFSET);
+		for (int i = 0; i < m_data.size(); i++){
+			if (m_data[i] != GRAPHUNDEFINEDVALUE)
+				glVertex3f(m_x + (m_data[i] - m_range[0]) * m_spacing[1] , (m_y + m_height - m_spacing[0] * i) , Z_OFFSET);
+		}
 		glEnd();
+
+		if (m_current >= 0 && m_current < m_data.size())
+		{
+			glColor3f(0.9f, 0.0, 0.0f);
+			glBegin(GL_LINE_STRIP);
+			glVertex3f(m_x, m_y + m_height - m_spacing[0] * m_current, Z_OFFSET);
+			glVertex3f(m_x + (m_range[1] - m_range[0]) * m_spacing[1], m_y + m_height - m_spacing[0] * m_current, Z_OFFSET);
+			glEnd();
+		}
+
+		if (m_selection >= 0 && m_selection < m_data.size())
+		{
+			glColor3f(0.0f, 0.9, 0.0f);
+			glBegin(GL_LINE_STRIP);
+			glVertex3f(m_x, m_y + m_height - m_spacing[0] * m_current, Z_OFFSET);
+			glVertex3f(m_x + (m_range[1] - m_range[0]) * m_spacing[1], m_y + m_height - m_spacing[0] * m_current, Z_OFFSET);
+			glEnd();
+		}
 	}
 }
 
@@ -65,10 +93,14 @@ bool VRGraph::checkIntersect(MinVR::VRPoint3& pt)
 {
 	if (VRMenuElement::checkIntersect(pt))
 	{
-		m_selection = (pt.x - m_x) / m_spacing[0] + 0.5;
-		if(m_selection < 0) m_selection = 0;
+		if (!m_vertical){
+			m_selection = (pt.x - m_x) / m_spacing[0] + 0.5;
+		} else {
+			m_selection = (m_height - pt.y + m_y) / m_spacing[0] + 0.5;
+		}
+		if (m_selection < 0) m_selection = 0;
 		if (m_selection >= m_data.size()) m_selection = m_data.size() - 1;
-		return true;
+ 		return true;
 	}
 	m_selection = -1;
 	return false;
@@ -91,7 +123,13 @@ void VRGraph::updateMousePosition(double x, double y)
 {
 	if (m_mouseDown)
 	{
-		m_selection = (x - m_x) / m_spacing[0] + 0.5;
+		if (!m_vertical){
+			m_selection = (x - m_x) / m_spacing[0] + 0.5;
+		} else
+		{
+			m_selection = (m_height - y + m_y) / m_spacing[0] + 0.5;
+		}
+
 		if (m_selection < 0) m_selection = 0;
 		if (m_selection >= m_data.size()) m_selection = m_data.size() - 1;
 		m_menu->sendEvent(this);
@@ -131,7 +169,12 @@ void VRGraph::computeBounds()
 	}
 	m_range[0] = min;
 	m_range[1] = max;
-
-	m_spacing[0] = m_width / m_data.size();
-	m_spacing[1] = m_height / (m_range[1] - m_range[0]);
+	if (!m_vertical){
+		m_spacing[0] = m_width / m_data.size();
+		m_spacing[1] = m_height / (m_range[1] - m_range[0]);
+	} else
+	{
+		m_spacing[0] = m_height / m_data.size();
+		m_spacing[1] = m_width / (m_range[1] - m_range[0]);
+	}
 }
