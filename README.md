@@ -1,2 +1,2 @@
-# Hologram-YURT
-An viewer for holographic microscope data for VR environments using MinVR.
+# VR-HolographicMicroscope
+Viewer to visualize processed data from a holographic microscope
